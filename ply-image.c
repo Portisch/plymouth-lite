@@ -70,6 +70,14 @@ typedef struct _ply_image
   long height;
 } ply_image_t;
 
+typedef struct _ply_image_array
+{
+  ply_image_t ** image;
+  ply_frame_buffer_t * buffer;
+  int image_count;
+  int current_image;
+} ply_image_array_t;
+
 
 static bool ply_image_open_file (ply_image_t *image);
 static void ply_image_close_file (ply_image_t *image);
@@ -141,7 +149,7 @@ transform_to_rgb32 (png_struct   *png,
 {
   unsigned int i;
 
-  for (i = 0; i < row_info->rowbytes; i += 4) 
+  for (i = 0; i < row_info->rowbytes; i += 4)
   {
     uint8_t  red, green, blue, alpha;
     uint32_t pixel_value;
@@ -360,8 +368,11 @@ ply_image_rotate (ply_image_t *image,
 
 #include <linux/kd.h>
 
+#include <sys/stat.h>
+#include "ply-timer.h"
+
 #ifndef FRAMES_PER_SECOND
-#define FRAMES_PER_SECOND 50
+#define FRAMES_PER_SECOND 20
 #endif
 
 static int console_fd;
@@ -371,7 +382,7 @@ hide_cursor (void)
 {
   static const char invisible_cursor[] = "\033[?25l\033[?1c";
 
-  if (write (STDOUT_FILENO, invisible_cursor, 
+  if (write (STDOUT_FILENO, invisible_cursor,
              sizeof (invisible_cursor) - 1) != sizeof (invisible_cursor) - 1)
     return false;
 
@@ -403,49 +414,199 @@ animate_at_time (ply_frame_buffer_t *buffer,
 
 }
 
+void
+show_next_image(size_t timer_id,
+                void * user_data)
+{
+  ply_image_array_t *animation_image_array = (ply_image_array_t *)user_data;
+  if (animation_image_array->current_image < animation_image_array->image_count)
+  {
+    animate_at_time (animation_image_array->buffer, animation_image_array->image[animation_image_array->current_image]);
+    animation_image_array->current_image++;
+  }
+}
+
+int
+file_exists(char *file)
+{
+  struct stat sb;
+  return (stat(file, &sb) == 0);
+}
+
+
+static void
+ply_daemonize ()
+{
+  int exit_code;
+  pid_t pid;
+
+  pid = fork();
+  if (pid == -1) {
+    exit_code = errno;
+    perror ("failed to fork while daemonizing first time");
+    exit (exit_code);
+  } else if (pid != 0) {
+    exit(0);
+  }
+
+  umask(0);
+
+  if (setsid() == -1) {
+    exit_code = errno;
+    perror ("can not create new session while daemonizing");
+    exit (exit_code);
+  }
+
+  /* signal(SIGHUP,SIG_IGN); */
+  pid=fork();
+  if (pid == -1) {
+    exit_code = errno;
+    perror ("failed to fork while daemonizing second time");
+    exit (exit_code);
+  } else if (pid != 0) {
+    exit(0);
+  }
+
+  if (chdir("/") == -1) {
+    exit_code = errno;
+    perror ("failed to change working directory while daemonizing");
+    exit (exit_code);
+  }
+
+  umask(0);
+  close(STDIN_FILENO);
+  close(STDOUT_FILENO);
+  close(STDERR_FILENO);
+
+  if (open("/dev/null", O_RDONLY) == -1) {
+    exit_code = errno;
+    perror ("failed to reopen stdin while daemonizing");
+    exit (exit_code);
+  }
+
+  if (open("/dev/null", O_WRONLY) == -1) {
+    exit_code = errno;
+    perror ("failed to reopen stdout while daemonizing");
+    exit (exit_code);
+  }
+
+  if (open("/dev/null", O_RDWR) == -1) {
+    exit_code = errno;
+    perror ("failed to reopen stderr while daemonizing");
+    exit (exit_code);
+  }
+}
+
 int
 main (int    argc,
       char **argv)
 {
-  ply_image_t *image;
-  ply_frame_buffer_t *buffer;
   int exit_code;
+
+  ply_image_array_t *animation_image_array = NULL;
+  size_t animation_timer;
+  int i;
+  int frame_rate = FRAMES_PER_SECOND;
+  char *splash_path = "/usr/share/plymouth/splash.png";
+  char animation_file_path[512];
 
   exit_code = 0;
 
   hide_cursor ();
 
-  if (argc == 1)
-    image = ply_image_new ("/usr/share/plymouth/splash.png");
-  else
-    image = ply_image_new (argv[1]);
+  if (argc >= 2)
+    splash_path = argv[1];
 
-  if (!ply_image_load (image))
-    {
-      exit_code = errno;
-      perror ("could not load image");
-      return exit_code;
-    }
+  if (argc >= 3)
+    frame_rate = atoi(argv[2]);
 
-  console_fd = open ("/dev/tty0", O_RDWR);
+  animation_image_array = calloc (1, sizeof (ply_image_array_t));
+  animation_image_array->image = NULL;
+  animation_image_array->buffer = ply_frame_buffer_new (NULL);
+  animation_image_array->image_count = 0;
+  animation_image_array->current_image = 0;
 
-  buffer = ply_frame_buffer_new (NULL);
-
-  if (!ply_frame_buffer_open (buffer))
+  if (!ply_frame_buffer_open (animation_image_array->buffer))
     {
       exit_code = errno;
       perror ("could not open framebuffer");
       return exit_code;
     }
 
-  image = ply_image_resize(image, buffer->area.width, buffer->area.height);
+  // check if single splash is used
+  if (file_exists(splash_path))
+  {
+    animation_image_array->image = realloc(animation_image_array->image, sizeof(ply_image_t));
+    animation_image_array->image[animation_image_array->image_count] = ply_image_new (splash_path);
+    animation_image_array->image_count++;
+  }
+  // check if animation is used
+  else
+  {
+    // create /../..%d.png file from given prefix
+    snprintf(animation_file_path, sizeof(animation_file_path),
+      "%s%d.png", splash_path, animation_image_array->image_count);
 
-  animate_at_time (buffer, image);
+    while (file_exists(animation_file_path))
+    {
+      animation_image_array->image = realloc(animation_image_array->image, sizeof(ply_image_t) * (animation_image_array->image_count + 1));
+      animation_image_array->image[animation_image_array->image_count] = ply_image_new (animation_file_path);
+      animation_image_array->image_count++;
 
-  ply_frame_buffer_close (buffer);
-  ply_frame_buffer_free (buffer);
+      // try next animation splash
+      snprintf(animation_file_path, sizeof(animation_file_path),
+        "%s%d.png", splash_path, animation_image_array->image_count);
+    }
+  }
 
-  ply_image_free (image);
+  if (animation_image_array->image_count > 0)
+  {
+    // load and resize each single image
+    for (i = 0; i < animation_image_array->image_count; i++)
+    {
+      if (!ply_image_load (animation_image_array->image[i]))
+        {
+          exit_code = errno;
+          perror ("could not load image");
+          return exit_code;
+        }
+
+      animation_image_array->image[i] =
+        ply_image_resize(animation_image_array->image[i],
+          animation_image_array->buffer->area.width, animation_image_array->buffer->area.height);
+    }
+
+    console_fd = open ("/dev/tty0", O_RDWR);
+
+    // show main/single splash
+    show_next_image(0, animation_image_array);
+
+    if (animation_image_array->current_image < animation_image_array->image_count)
+    {
+      ply_daemonize();
+
+      // init periodic timer
+      initialize();
+
+      animation_timer = start_timer(1000 / frame_rate, show_next_image, TIMER_PERIODIC, animation_image_array);
+
+      while (animation_image_array->current_image < animation_image_array->image_count)
+        usleep(5000);
+
+      // stop periodic timer
+      stop_timer(animation_timer);
+
+      finalize();
+    }
+
+    ply_frame_buffer_close (animation_image_array->buffer);
+    ply_frame_buffer_free (animation_image_array->buffer);
+
+    for (i = 0; i < animation_image_array->image_count; i++)
+      ply_image_free (animation_image_array->image[i]);
+  }
+
+  free(animation_image_array);
 
   return exit_code;
 }

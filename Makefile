@@ -1,7 +1,7 @@
 
-ply-image: ply-image.c ply-frame-buffer.c Makefile
-	$(CC) $(CFLAGS) -Wl,-Bstatic `pkg-config --cflags libpng`  ply-image.c ply-frame-buffer.c -o ply-image `pkg-config --libs libpng` -lz -Wl,-Bdynamic -lc -lm $(LDFLAGS)
 	
+ply-image: ply-image.c ply-frame-buffer.c ply-timer.c Makefile
+	$(CC) $(CFLAGS) -Wl,-Bstatic `pkg-config --cflags libpng`  ply-image.c ply-frame-buffer.c ply-timer.c -o ply-image `pkg-config --libs libpng` -pthread -lz -Wl,-Bdynamic -lc -lm $(LDFLAGS)
 clean:
 	rm -f ply-image *~ gmon.out
 	

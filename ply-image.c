@@ -135,33 +135,6 @@ ply_image_free (ply_image_t *image)
 }
 
 static void
-transform_to_argb32 (png_struct   *png,
-                     png_row_info *row_info,
-                     png_byte     *data)
-{
-  unsigned int i;
-
-  for (i = 0; i < row_info->rowbytes; i += 4) 
-  {
-    uint8_t  red, green, blue, alpha;
-    uint32_t pixel_value;
-
-    red = data[i + 0];
-    green = data[i + 1];
-    blue = data[i + 2];
-    alpha = data[i + 3];
-
-    red = (uint8_t) CLAMP (((red / 255.0) * (alpha / 255.0)) * 255.0, 0, 255.0);
-    green = (uint8_t) CLAMP (((green / 255.0) * (alpha / 255.0)) * 255.0,
-                             0, 255.0);
-    blue = (uint8_t) CLAMP (((blue / 255.0) * (alpha / 255.0)) * 255.0, 0, 255.0);
-
-    pixel_value = (alpha << 24) | (red << 16) | (green << 8) | (blue << 0);
-    memcpy (data + i, &pixel_value, sizeof (uint32_t));
-  }
-}
-
-static void
 transform_to_rgb32 (png_struct   *png,
                      png_row_info *row_info,
                      png_byte     *data)

@@ -776,8 +776,11 @@ ply_frame_buffer_fill_with_argb32_data(ply_frame_buffer_t      *buffer,
     {
       for (column = x; column < x + area->width; column++)
         {
-          buffer->shadow_buffer[(row-y) * buffer->area.width -x + column] = data[area->width * row + column];
+          uint32_t pixel_value = data[area->width * row + column];
+          if ((pixel_value >> 24) == 0x00)
+            continue;
 
+          buffer->shadow_buffer[(row-y) * buffer->area.width -x + column] = pixel_value;
         }
     }
 

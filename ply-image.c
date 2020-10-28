@@ -377,6 +377,8 @@ ply_image_rotate (ply_image_t *image,
 
 static int console_fd;
 
+static bool end_animation = false;
+
 static bool
 hide_cursor (void)
 {
@@ -424,6 +426,11 @@ show_next_image(size_t timer_id,
     animate_at_time (animation_image_array->buffer, animation_image_array->image[animation_image_array->current_image]);
     animation_image_array->current_image++;
   }
+
+  // restart loop with frame 1, frame 0 is the "full screen" frame
+  if (animation_image_array->current_image == animation_image_array->image_count &&
+      animation_image_array->image_count > 1)
+        animation_image_array->current_image = 1;
 }
 
 int
@@ -433,6 +440,16 @@ file_exists(char *file)
   return (stat(file, &sb) == 0);
 }
 
+static void
+ply_handle_signal (int sig)
+{
+  switch (sig)
+  {
+    case SIGUSR1:
+      end_animation = true;
+      break;
+  }
+}
 
 static void
 ply_daemonize ()
@@ -583,6 +600,8 @@ main (int    argc,
 
     if (animation_image_array->current_image < animation_image_array->image_count)
     {
+      signal(SIGUSR1, ply_handle_signal);
+
       ply_daemonize();
 
       // init periodic timer
@@ -590,7 +609,7 @@ main (int    argc,
 
       animation_timer = start_timer(1000 / frame_rate, show_next_image, TIMER_PERIODIC, animation_image_array);
 
-      while (animation_image_array->current_image < animation_image_array->image_count)
+      while (!end_animation)
         usleep(5000);
 
       // stop periodic timer
